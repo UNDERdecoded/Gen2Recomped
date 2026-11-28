@@ -226,7 +226,14 @@ local resolved, unresolved = 0, {}
 for key = 0, 48 do
   local constant = Mining.TREASURE_ITEMS[key]
   if constant then
-    local id = byName[(constant:gsub("^ITEM_", ""):gsub("_", " "))]
+    -- by cartridge id (language-free); an English cache's display name must
+    -- agree with that id, so the id table itself stays checked
+    local id = Mining.TREASURE_ITEM_IDS[constant]
+    if id and not items[id] then id = nil end
+    local byEnglish = byName[(constant:gsub("^ITEM_", ""):gsub("_", " "))]
+    if id and byEnglish then
+      ok(byEnglish == id, "%s: the id table says %s, the English name says %s", constant, tostring(id), tostring(byEnglish))
+    end
     if id then resolved = resolved + 1 else unresolved[#unresolved + 1] = constant end
   end
 end

@@ -31,11 +31,28 @@ function L.resolve(options,version)
  if target==source then target="original" end
  return target,source
 end
+L._romLang={}
 function L.romLanguage(version)
  local ok,GameVersion=pcall(require,"src.core.GameVersion")
  local info=ok and version and GameVersion.info and GameVersion.info(version)
  local lang=type(info)=="table" and info.textLanguage
- return type(lang)=="string" and lang or "en"
+ if type(lang)=="string" then return lang end
+ -- a non-English Gen 4 cartridge (German Platinum) records its text language
+ -- in its cache (gen4_language.lua); without it German ROM text would be
+ -- sent for translation as if it were English
+ if type(info)=="table" and info.cachePrefix then
+  if L._romLang[version] then return L._romLang[version] end
+  local okA,Art=pcall(require,"src.pokewalker.WalkerArt")
+  local src=okA and Art._read and Art._read(info.cachePrefix,"data/generated/gen4_language.lua")
+  local chunk=src and (loadstring or load)(src,"=gen4_language")
+  local okC,rec=false,nil
+  if chunk then okC,rec=pcall(chunk) end
+  if okC and type(rec)=="table" and type(rec.language)=="string" then
+   L._romLang[version]=rec.language
+   return rec.language
+  end
+ end
+ return "en"
 end
 function L.font(target)
  if target=="ja" or target=="zh" then

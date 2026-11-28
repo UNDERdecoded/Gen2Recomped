@@ -235,6 +235,16 @@ function NdsRom:index()
   end
 
   walk(ROOT, "")
+  -- A LOCALIZED BUILD THAT MOVED ITS LANGUAGE ARCHIVES: German Platinum keeps
+  -- /graphic/box.narc as /resource/ger/box/box.narc, and so on for 32 files
+  -- (src/import/Gen4Regions.lua).  The US path is made to name the moved file
+  -- so every reader keeps asking for the path it was written against.  Only
+  -- paths the cartridge does NOT have are aliased; `files` stays the real list.
+  local okR, Regions = pcall(require, "src.import.Gen4Regions")
+  local aliases = okR and Regions.pathAliases(readAt(self, H.GAME_CODE, 4))
+  for usPath, here in pairs(aliases or {}) do
+    if not byPath[usPath] and byPath[here] then byPath[usPath] = byPath[here] end
+  end
   self._index = { files = files, byPath = byPath, dirCount = dirs }
   return self._index
 end

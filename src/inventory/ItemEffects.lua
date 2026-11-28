@@ -514,12 +514,34 @@ function ItemEffects.markGen4Machines(data)
       .. "unbroken run, so an id is not an index into tmhmMoves", n, lo, hi)
   end
 
+  -- THE TWO PREFIXES ARE THE CARTRIDGE'S OWN WORDS: "TM"/"HM" in English,
+  -- "TM"/"VM" on a German Platinum (CT/CS in French, MT/MN in Italian).  So
+  -- the TM prefix is the one the FIRST machine (the lowest id, TM01) carries,
+  -- the HM prefix is the other one, and the kind below is which of the two a
+  -- name wears -- never the English letters.
+  local tmPrefix = tostring(byId[lo].name or ""):match("^(%a+)%d+$")
+  local function kindOf(name)
+    local prefix, number = tostring(name or ""):match("^(%a+)(%d+)$")
+    if not prefix then return nil end
+    return (prefix == tmPrefix) and "TM" or "HM", number, prefix
+  end
+
   -- The TM run's length, read off the names rather than assumed to be 92.
   local tmCount = 0
   for id in pairs(byId) do
-    if tostring(byId[id].name or ""):match("^TM%d+$") then
+    if kindOf(byId[id].name) == "TM" then
       tmCount = tmCount + 1
     end
+  end
+  -- ...and only two prefixes may exist, or "the other one" means nothing
+  local prefixes, nPrefixes = {}, 0
+  for id in pairs(byId) do
+    local _, _, prefix = kindOf(byId[id].name)
+    if prefix and not prefixes[prefix] then prefixes[prefix] = true; nPrefixes = nPrefixes + 1 end
+  end
+  if not tmPrefix or nPrefixes > 2 then
+    return refuse("the machine items carry %d name prefixes (first %q), not a "
+      .. "TM and an HM one", nPrefixes, tostring(byId[lo].name))
   end
 
   -- IN ID ORDER, so a refusal names the FIRST item that disagrees.  `pairs`
@@ -533,7 +555,7 @@ function ItemEffects.markGen4Machines(data)
   for _, id in ipairs(ids) do
     local def = byId[id]
     local index = id - lo + 1
-    local kind, number = tostring(def.name or ""):match("^([TH]M)(%d+)$")
+    local kind, number = kindOf(def.name)
     if not kind then
       return refuse("item %d carries the TM/HM use function but is named %q",
         id, tostring(def.name))
@@ -944,6 +966,14 @@ end
 
 ItemEffects.gen3Use = gen3Use
 
+-- A PLATINUM KEY ITEM BY ITS CARTRIDGE ID, for the branches below that also
+-- test the English name: on a Platinum cache (any language -- a German one
+-- says "Tagebuch" for the Journal) the id alone decides.
+local function ptItem(data, rawItemId, id)
+  local G = require("src.inventory.Gen4ItemUse")
+  return G.numeric(rawItemId) == id and G.isPlatinum(data) and true or false
+end
+
 function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
   local itemDef = data.items[itemId]
   local name = itemDef and itemDef.name or itemId
@@ -973,8 +1003,13 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     if f == 4 then itemId = "BICYCLE"
     elseif f == 21 then itemId = "ESCAPE_ROPE"
     elseif f == 19 then
+      -- by name on an English cache, else by the cartridge's ids (Repel 79,
+      -- Super Repel 76, Max Repel 77, Black Flute 68, White Flute 69 -- the
+      -- same on Platinum, HGSS and Black / White): German names are German
       itemId = ({ ["Repel"] = "REPEL", ["Super Repel"] = "SUPER_REPEL", ["Max Repel"] = "MAX_REPEL",
-                  ["Black Flute"] = "BLACK_FLUTE", ["White Flute"] = "WHITE_FLUTE" })[nm] or itemId
+                  ["Black Flute"] = "BLACK_FLUTE", ["White Flute"] = "WHITE_FLUTE" })[nm]
+        or ({ [79] = "REPEL", [76] = "SUPER_REPEL", [77] = "MAX_REPEL",
+              [68] = "BLACK_FLUTE", [69] = "WHITE_FLUTE" })[numericRaw] or itemId
     end
   end
   local gen2Friendship = require("src.pokemon.Gen2Friendship")
@@ -1493,14 +1528,16 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
   end
   -- PLATINUM'S JOURNAL (fieldUseFunc 5, ITEM_USE_FUNC_JOURNAL: UseJournalFromMenu
   -- and UseJournalInField both open the journal app, sub_0203D30C)
-  if itemDef and itemDef.fieldUseFunc == 5 and (itemDef.translationSourceName or itemDef.name) == "Journal" then
+  if itemDef and itemDef.fieldUseFunc == 5 and ((itemDef.translationSourceName or itemDef.name) == "Journal"
+      or ptItem(data, rawItemId, 433)) then
     if battle then
       return "failed", { Strings("OAK: %s!\nThis isn't the\ntime to use that!", save.player.name) }
     end
     return "journal"
   end
   -- THE POKE RADAR (fieldUseFunc 11, ITEM_USE_FUNC_POKE_RADAR)
-  if itemDef and itemDef.fieldUseFunc == 11 and (itemDef.translationSourceName or itemDef.name) == "Poké Radar" then
+  if itemDef and itemDef.fieldUseFunc == 11 and ((itemDef.translationSourceName or itemDef.name) == "Poké Radar"
+      or ptItem(data, rawItemId, 431)) then
     if battle then
       return "failed", { Strings("OAK: %s!\nThis isn't the\ntime to use that!", save.player.name) }
     end
@@ -1510,7 +1547,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
   -- function row (`fieldUseFunc` 2, UseTownMapFromBag) says what it is
   -- (Black / White's item records call the same row `fieldUse`)
   local isGen4TownMap = itemDef and (itemDef.fieldUseFunc == 2 or itemDef.fieldUse == 2)
-    and (itemDef.translationSourceName or itemDef.name) == "Town Map"
+    and ((itemDef.translationSourceName or itemDef.name) == "Town Map" or ptItem(data, rawItemId, 442))
   if itemId == "TOWN_MAP" or isGen4TownMap then
     if battle then
       return "failed", { Strings("OAK: %s!\nThis isn't the\ntime to use that!", save.player.name) }
@@ -1540,7 +1577,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
   end
   -- PLATINUM'S COIN CASE (item 444): BagContext_FormatUsageMessage prints bank
   -- 7 (TEXT_BANK_BAG) #57, "Your Coins: {STRVAR_1 54 0 0}", unpadded.
-  if require("src.inventory.Gen4ItemUse").numeric(rawItemId) == 444 and itemDef and (itemDef.translationSourceName or itemDef.name) == "Coin Case" then
+  if require("src.inventory.Gen4ItemUse").numeric(rawItemId) == 444 and itemDef and ((itemDef.translationSourceName or itemDef.name) == "Coin Case" or ptItem(data, rawItemId, 444)) then
     local key = require("src.import.Gen4Text").label(7, 57)
     local line = data and data.text and data.text[key]
     local coins = tostring(require("src.import.Gen4GameCorner").coins(save))
@@ -1548,14 +1585,14 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     return "failed", { line }
   end
   -- THE POFFIN CASE (item 449): its own screen (src/ui/Gen4PoffinCase.lua).
-  if require("src.inventory.Gen4ItemUse").numeric(rawItemId) == 449 and itemDef and (itemDef.translationSourceName or itemDef.name) == "Poffin Case" then
+  if require("src.inventory.Gen4ItemUse").numeric(rawItemId) == 449 and itemDef and ((itemDef.translationSourceName or itemDef.name) == "Poffin Case" or ptItem(data, rawItemId, 449)) then
     if battle then
       return "failed", { Strings("OAK: %s!\nThis isn't the\ntime to use that!", save.player.name) }
     end
     return "poffin_case"
   end
   -- ...and the SEAL CASE (item 434): bank 7 #92, "Seals: n" -- CalcTotalBallSeals.
-  if require("src.inventory.Gen4ItemUse").numeric(rawItemId) == 434 and itemDef and (itemDef.translationSourceName or itemDef.name) == "Seal Case" then
+  if require("src.inventory.Gen4ItemUse").numeric(rawItemId) == 434 and itemDef and ((itemDef.translationSourceName or itemDef.name) == "Seal Case" or ptItem(data, rawItemId, 434)) then
     local key = require("src.import.Gen4Text").label(7, 92)
     local line = data and data.text and data.text[key]
     local n = tostring(require("src.import.Gen4Seals").total(save))

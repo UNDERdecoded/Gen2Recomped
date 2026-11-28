@@ -163,6 +163,12 @@ local KNOWN = {
   -- HeartGold / SoulSilver's declined rows (Gen4HgssScriptAliases), each a
   -- picture, an app or a link feature argued where it is lowered
   ["chatot's recorded cry"] = true, ["day care's pokemon in the yard"] = true,
+  -- Platinum's dress-up photo frames: the Gen4ScriptVM source still carries the
+  -- original "no photos" row for `dressupphotohasdata`, but
+  -- Gen4PhotoCommands.install replaces it with g4_photo_has_data at load, so
+  -- the 11 sites are answered; the census reads the source text and sees the
+  -- shadowed fallback.
+  ["dress-up photos"] = true,
   ["dress-up portrait studio"] = true, ["hall of fame machine's balls"] = true,
   ["hideout doors' prop animations"] = true,
   ["leaving the overworld for an app"] = true, ["persian statues' alarm"] = true,

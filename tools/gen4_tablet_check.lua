@@ -25,7 +25,16 @@ local function var(v) return save.gen4Vars[v] end
 
 C.g4_tablet_naming(ctx, 0x800C)
 check(opened and opened.id == 'NamingScreen' and opened.opts.maxLen == 10, 'the naming screen, ten characters')
-check(opened.opts.title == 'Thank who?', 'titled from bank 422 #6, the {YESNO} stripped: ' .. tostring(opened.opts.title))
+-- a non-English cache (gen4_language.lua): the title is that cartridge's line, still
+-- with the {YESNO} stripped, not the English words
+local langChunk = loadfile(dir .. '/gen4_language.lua')
+if langChunk and langChunk() then
+  local t = opened.opts.title
+  check(type(t) == 'string' and t ~= '' and t ~= 'Thank who?' and not t:find('{', 1, true),
+        'titled from bank 422 #6 in the cartridge\'s language, the {YESNO} stripped: ' .. tostring(t))
+else
+  check(opened.opts.title == 'Thank who?', 'titled from bank 422 #6, the {YESNO} stripped: ' .. tostring(opened.opts.title))
+end
 opened.opts.onDone('')
 check(var(0x800C) == 1 and save.gen4TabletName == nil, 'nothing entered: returnCode 1, nothing saved')
 C.g4_tablet_naming(ctx, 0x800C)

@@ -39,7 +39,7 @@ M.FIELD_FADE_STEPS = 6
 
 local function platinum()
   local ok, GV = pcall(require, "src.core.GameVersion")
-  return ok and GV.get and GV.get() == "platinum"
+  return ok and GV.isPlatinumFamily and GV.isPlatinumFamily() or false
 end
 
 function Commands.g4_spear_pillar_cutscene(ctx)

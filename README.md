@@ -22,7 +22,7 @@ items, and the Gold/Silver title sequence.
 It has since grown well past Generation II. The same launcher now imports and
 runs **FireRed** and **Emerald** (Gen 3), **Platinum**, **HeartGold** and
 **SoulSilver** (Gen 4), and **Black** and **White** (Gen 5), plus the
-**Polished Crystal** and **Prism** romhacks — all side by side, all from your
+**Polished Crystal**, **Prism** and **Renegade Platinum** romhacks — all side by side, all from your
 own cartridge dumps. Around the games sit the **Monster Walker** (a
 next-gen Pokéwalker with minigames and a Watt Shop), a **Map Editor**, a
 **Save Editor**, machine **translation** into 25 languages, **cloud saves**,
@@ -80,10 +80,18 @@ revision) so you know why — see [docs/rom-revisions.md](docs/rom-revisions.md)
 | Emerald | GBA | Alpha | `f3ae088181bf583e55daf962a92bb46f4f1d07b7` |
 | Platinum (Rev 1) | DS | Pre-alpha | `0862ec35b24de5c7e2dcb88c9eea0873110d755c` |
 | Platinum (Rev 0) | DS | Pre-alpha | `ce81046eda7d232513069519cb2085349896dec7` |
+| Platinum (Europe, English) | DS | Pre-alpha | `8d15cd443d4e83e20493c79d3f9dc408c4f51ae0` |
+| Platin Edition (Germany) | DS | Pre-alpha | `5d009a175c77d4387cde26d34efb71aee825a938` |
 | HeartGold (USA) | DS | Pre-alpha | `4fcded0e2713dc03929845de631d0932ea2b5a37` |
 | SoulSilver (USA) | DS | Pre-alpha | `f8dc38ea20c17541a43b58c5e6d18c1732c7e582` |
 | Black (USA/EU) | DS | Pre-alpha | `26ad0b9967aa279c4a266ee69f52b9b2332399a5` |
 | White (USA/EU) | DS | Pre-alpha | `bc696a0dfb448c7b3a8a206f0f8214411a039208` |
+| Renegade Platinum (over Platinum USA Rev 1) | DS | Pre-alpha | `381f9eef44564602a5f6469ee8c390fbb8ebac3a` |
+
+All four Platinum dumps import as the same game and share one save. The
+German cartridge plays in German (its own text, names and localized art); the
+European one is the US game with the European Game Corner. See
+[docs/rom-revisions.md](docs/rom-revisions.md#platinum-europe-and-germany).
 
 HeartGold, SoulSilver, Black and White dumps that have had their trailing `FF`
 padding trimmed are also accepted, as long as every game byte is intact — see
@@ -123,6 +131,10 @@ Everything below arrived since this README was last updated.
   including Professor Juniper's intro in BW — as **PRE-ALPHA** builds.
 - **Polished Crystal** (beta) and **Prism** (experimental) romhacks, with
   audio, overworld rendering and feature-parity fixes.
+- **Renegade Platinum** (pre-alpha) imports as its own game on the Platinum
+  engine. It has the hack's species, moves, trainers and encounters, the
+  Fairy type (its chart, names and icons) and its 1/512 shiny odds. See
+  [docs/renegade-platinum.md](docs/renegade-platinum.md).
 - **Mass ROM import**: pick a folder's worth of dumps at once.
 
 ### Monster Walker

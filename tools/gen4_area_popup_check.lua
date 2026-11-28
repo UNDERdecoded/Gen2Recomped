@@ -26,11 +26,17 @@ check(n == 9, 'nine signs')
 check(rec.headers[411].window == 2 and rec.headers[3].window == 1, 'Twinleaf wears the town sign, Jubilife the city one')
 
 local game = { data = { gen4_area_popup = rec, text = load('text') } }
+-- Twinleaf Town's label (place-name bank 433, index 1) in the cartridge's language;
+-- English stays exact, German (Zweiblattdorf) is its own expectation.
+local itemsT = load('items')
+local english = itemsT and itemsT[1] and itemsT[1].name == 'Master Ball'
+local twinText = game.data.text['TEXT_B0433_00001']
+check(twinText == (english and 'Twinleaf Town' or 'Zweiblattdorf'), 'Twinleaf label is the cartridge language name (' .. tostring(twinText) .. ')')
 local P = require('src.world.Gen4AreaPopup')
 
 -- triggers
 local s = P.onArrive(game, nil, 411)
-check(s and s.name == 'Twinleaf Town' and s.window == 1, 'arriving in Twinleaf shows its name on the town sign')
+check(s and s.name == twinText and s.window == 1, 'arriving in Twinleaf shows its name on the town sign')
 local building
 for id, h in pairs(rec.headers) do if h.mapType == 4 and h.window ~= 0 then building = id break end end
 check(building == nil or P.onArrive(game, nil, building) == nil, 'a building announces nothing on arrival')

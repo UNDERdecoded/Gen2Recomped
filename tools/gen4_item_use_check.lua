@@ -87,6 +87,27 @@ for id, def in pairs(plItems) do
     byName[def.name] = def
   end
 end
+-- THE CARTRIDGE'S ITEM IDS (language-free) for the English names this file
+-- speaks in.  An English cache is checked against them (so the table itself
+-- stays honest); a cache in another language is read through them.
+local EN_IDS = {
+  ["Potion"] = 17, ["Super Potion"] = 26, ["Hyper Potion"] = 25, ["Max Potion"] = 24,
+  ["Fresh Water"] = 30, ["Revive"] = 28, ["Max Revive"] = 29, ["Antidote"] = 18,
+  ["Burn Heal"] = 19, ["Awakening"] = 21, ["Full Heal"] = 27, ["Full Restore"] = 23,
+  ["Ether"] = 38, ["Max Ether"] = 39, ["Elixir"] = 40, ["Max Elixir"] = 41,
+  ["PP Up"] = 51, ["PP Max"] = 53, ["Rare Candy"] = 50, ["HP Up"] = 45,
+  ["Protein"] = 46, ["Iron"] = 47, ["Carbos"] = 48, ["Calcium"] = 49, ["Zinc"] = 52,
+  ["Energy Root"] = 35, ["Poké Ball"] = 4,
+}
+local englishCache = plItems[1] and plItems[1].name == "Master Ball"
+for name, id in pairs(EN_IDS) do
+  if englishCache then
+    ok(byName[name] ~= nil and plItems[id] == byName[name],
+       "EN_IDS says %s is item %d, the cache disagrees", name, id)
+  elseif plItems[id] then
+    byName[name] = plItems[id]
+  end
+end
 io.write(("  %s: %d items, %d of them keyed by number\n")
          :format(plRoot, total, numeric))
 
@@ -308,7 +329,7 @@ if plPokemon then
   end
   local function keyOf(name)
     for id, def in pairs(plItems) do
-      if type(def) == "table" and def.name == name and type(id) == "number" then
+      if type(def) == "table" and def == byName[name] and type(id) == "number" then
         return ("ITEM_%03d"):format(id)
       end
     end

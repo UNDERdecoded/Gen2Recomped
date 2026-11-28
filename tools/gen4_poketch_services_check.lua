@@ -6,13 +6,16 @@ package.loaded['src.render.Font'] = { draw = function() end, width = function(s)
 package.loaded['src.core.Logger'] = { warn = function() end, info = function() end }
 package.loaded['src.core.Strings'] = function(s) return s end
 package.loaded['src.core.GameVersion'] = { isGen2 = function() return false end,
-  isGen3 = function() return false end, get = function() return 'platinum' end,
+  isGen3 = function() return false end, isGen4 = function() return true end, isGen5 = function() return false end, get = function() return 'platinum' end,
   info = function() return { family = 'platinum', generation = 4 } end }
 package.loaded['src.ui.SecondScreen'] = { toLocal = function(_, x, y)
   if x >= 0 and x < 256 and y >= 0 and y < 192 then return x, y end
 end }
 love = { math = { random = math.random } }
 local P = require('src.ui.Gen4Poketch')
+-- The stub lists its apps in the order these steps index them; the engine's own
+-- cartridge re-ordering (Gen4Poketch.cartridgeOrder) is exercised elsewhere.
+P.cartridgeOrder = function(apps) return apps end
 local game = { save = { inventory = {}, money = 5000 }, data = { gen4_menus = {
  poketch = { apps = { {name='Counter'}, {name='Calculator'}, {name='Memo Pad'},
  {name='Stopwatch'}, {name='Kitchen Timer'} } } } }, stack = { pop = function() end } }
@@ -161,6 +164,7 @@ check(game.save.poketch.matchup[1]==3 and game.save.poketch.matchup[2]==2,
 watch:touchpressed(1,112,144); watch:touchreleased(1)
 check(game.save.poketch.compatibility==0, 'Matchup check uses selected party pair')
 package.loaded['src.script.Commands'] = {meta={}}
+package.loaded['src.script.Gen4Commands'] = nil
 require('src.script.Gen4Commands')
 local commands = package.loaded['src.script.Commands']
 local yielded,resumed=0,0

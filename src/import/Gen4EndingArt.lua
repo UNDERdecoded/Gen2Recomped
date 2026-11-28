@@ -150,16 +150,30 @@ end
 -- reaches its y and erased sixteen pixels after the top passes it. Also the
 -- credits' text palette (ending.narc text.NCLR, member 85) for {COLOR n}.
 Gen4EndingArt.ROLL_OVERLAY = 99
-Gen4EndingArt.ROLL_SIGNATURE = string.char(0,0, 0,0, 1,0, 1,0, 16,0, 1,0, 2,0, 146,0, 0,0)
-Gen4EndingArt.ROLL_COUNT = 237
+-- Only the first two rows and the third's message id: the German cartridge
+-- lays its roll out for its own credits (row 2 at y 171 where the US one has
+-- 146, and 224 rows where the US has 237), so neither the third row's y nor
+-- the count identifies the table.  Every row's message id is its index, and
+-- the table runs for as long as that holds.
+Gen4EndingArt.ROLL_SIGNATURE = string.char(0,0, 0,0, 1,0, 1,0, 16,0, 1,0, 2,0)
+Gen4EndingArt.ROLL_COUNT = 237      -- the US cartridge's; German Platinum has 224
+Gen4EndingArt.ROLL_MIN, Gen4EndingArt.ROLL_MAX = 100, 400
 
 function Gen4EndingArt.data(rom)
   local out = {}
   local ok, ov = pcall(rom.overlay, rom, Gen4EndingArt.ROLL_OVERLAY)
   local at = ok and ov and ov:find(Gen4EndingArt.ROLL_SIGNATURE, 1, true)
+  local count = 0
   if at then
+    while count < Gen4EndingArt.ROLL_MAX and at + count * 6 + 5 <= #ov do
+      local o = at + count * 6
+      if ov:byte(o) + ov:byte(o + 1) * 256 ~= count then break end
+      count = count + 1
+    end
+  end
+  if at and count >= Gen4EndingArt.ROLL_MIN then
     local roll = {}
-    for i = 0, Gen4EndingArt.ROLL_COUNT - 1 do
+    for i = 0, count - 1 do
       local o = at + i * 6
       roll[i + 1] = { message = ov:byte(o) + ov:byte(o + 1) * 256, y = ov:byte(o + 2) + ov:byte(o + 3) * 256,
                       centred = (ov:byte(o + 4) + ov:byte(o + 5) * 256) ~= 0 }

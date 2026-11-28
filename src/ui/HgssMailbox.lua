@@ -41,7 +41,7 @@ local function txt(game, n, fallback, author)
   local T = require("src.import.Gen4Text")
   local s = game.data and game.data.text and game.data.text[T.label(B.BANK, n)]
   if type(s) ~= "string" or s == "" then s = fallback or "" end
-  s = s:gsub("{STRVAR_1 %d+ 0 0}", function() return author or "" end)
+  s = require("src.script.Commands").gen4Markup(s, { stringBuffers = { author or "" } })
   return (s:gsub("\011", "\n"):gsub("{[^}]*}", ""))
 end
 

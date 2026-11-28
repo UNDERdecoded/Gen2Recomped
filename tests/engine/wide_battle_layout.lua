@@ -39,10 +39,10 @@ T.eq(WideBattle.navigate(1, 4, pressing("a")), nil,
   "navigate leaves A / B / SELECT to the battle engine")
 
 -- animation frames shift as one rigid group toward the side they play on
-local px, py = WideBattle.animationOffset({ { x = 24 }, { x = 64 } })
+local px, py = WideBattle.animationOffset({ { x = 30 } })   -- band centre 26: the player pic
 T.eq(px, 20, "a player-side frame lands on the player anchor")
 T.eq(py, 8, "a player-side frame lands on the player baseline")
-local ex, ey = WideBattle.animationOffset({ { x = 104 }, { x = 144 } })
+local ex, ey = WideBattle.animationOffset({ { x = 128 } })  -- band centre 124: the enemy pic
 T.eq(ex, 136, "an enemy-side frame lands on the enemy anchor")
 T.eq(ey, 0, "an enemy-side frame lands on the enemy baseline")
 

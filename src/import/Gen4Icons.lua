@@ -107,6 +107,26 @@ Gen4Icons.VERIFIED = {
   [395] = 0,  -- Empoleon
 }
 
+-- A HACK THAT REDRAWS ICONS REASSIGNS THEIR RAMPS. Renegade Platinum keeps
+-- sPokemonIconPaletteIndex exactly where Platinum has it (11 of the 14
+-- anchors above still hold there, and the run around it is the same) but
+-- re-colours 86 entries for its new icon art -- Geodude 1 -> 0, Infernape
+-- 0 -> 2, Piplup 2 -> 0 among them. Its anchors are Platinum's with those
+-- three read from the hack's own table at Platinum's verified offset.
+Gen4Icons.VERIFIED_BY_VERSION = {
+  renegadeplatinum = { [74] = 0, [392] = 2, [393] = 0 },
+}
+
+-- every anchor of a version's table (its overrides over Platinum's)
+function Gen4Icons.anchorsFor(version)
+  local over = Gen4Icons.VERIFIED_BY_VERSION[version]
+  if not over then return Gen4Icons.VERIFIED end
+  local out = {}
+  for species, ramp in pairs(Gen4Icons.VERIFIED) do out[species] = ramp end
+  for species, ramp in pairs(over) do out[species] = ramp end
+  return out
+end
+
 local function spread(bin, at, count, ramps)
   local seen, total = {}, 0
   for i = 0, count - 1 do
@@ -128,7 +148,7 @@ end
 
 -- Find sPokemonIconPaletteIndex in the ARM9 binary.
 -- Returns a 1-based byte offset and the entropy it won with, or nil.
-function Gen4Icons.findPaletteTable(bin, icons)
+function Gen4Icons.findPaletteTable(bin, icons, anchors)
   if type(bin) ~= "string" then return nil end
   icons = icons or 540
   local ramps = Gen4Icons.RAMPS
@@ -146,7 +166,7 @@ function Gen4Icons.findPaletteTable(bin, icons)
         -- the array can begin INSIDE the run (the bytes before it may be
         -- small too): the offset where every anchor holds wins outright
         for start = at, last - icons do
-          if Gen4Icons.verify(bin, start) then
+          if Gen4Icons.verify(bin, start, anchors) then
             local h, counts = spread(bin, start, icons, ramps)
             return start, h, counts
           end
@@ -167,9 +187,9 @@ end
 -- against? The extractor refuses a table that does not, because a wrong one
 -- produces a party list that is merely MIS-COLOURED -- which looks like a
 -- palette bug rather than a located-the-wrong-array bug.
-function Gen4Icons.verify(bin, at)
+function Gen4Icons.verify(bin, at, anchors)
   local wrong = {}
-  for species, ramp in pairs(Gen4Icons.VERIFIED) do
+  for species, ramp in pairs(anchors or Gen4Icons.VERIFIED) do
     local got = bin:byte(at + species)
     if got ~= ramp then
       wrong[#wrong + 1] = ("%d got %s want %d")

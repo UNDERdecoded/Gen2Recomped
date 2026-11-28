@@ -69,10 +69,14 @@ if ug then
      "the Underground should be 480x480 (15x15 chunks), dataset says %sx%s",
      tostring(ug.width), tostring(ug.height))
   -- The label is what CanUseExplorerKit compares, so the refusal depends on it.
-  ok(ug.label == "Mystery Zone",
-     "the Underground's label is %q, and Gen4Underground refuses on "
-     .. "\"Mystery Zone\" -- the kit would not climb back out",
-     tostring(ug.label))
+  -- (the label is the cartridge's language; Gen4Underground compares the
+  -- text id, so the name is only asserted per language)
+  local itemsT = load_("items.lua")
+  local english = itemsT and itemsT[1] and itemsT[1].name == "Master Ball"
+  local wantLabel = english and "Mystery Zone" or "Mysteriöser Ort"
+  ok(ug.label == wantLabel,
+     "the Underground's label is %q, expected %q -- the kit would not "
+     .. "climb back out", tostring(ug.label), wantLabel)
 end
 
 -- ---------------------------------------------------------------------------
@@ -89,9 +93,9 @@ end
 io.write(("  items with fieldUseFunc == 3: %d (id %s, %s)\n"):format(
   kits, tostring(kitId), kitId and tostring(items[kitId].name) or "-"))
 ok(kits == 1, "expected exactly one item on dispatch row 3, found %d", kits)
-ok(kitId ~= nil and items[kitId].name == "Explorer Kit",
-   "dispatch row 3 is %q, not the Explorer Kit",
-   kitId and tostring(items[kitId].name) or "nothing")
+ok(kitId == 428 and (items[kitId].name == "Explorer Kit" or items[1].name ~= "Master Ball"),
+   "dispatch row 3 is %q (id %s), not the Explorer Kit (428)",
+   kitId and tostring(items[kitId].name) or "nothing", tostring(kitId))
 -- The control: the row number has to be doing work. If every item answered, or
 -- none did, the test above would pass for the wrong reason.
 local rows = {}

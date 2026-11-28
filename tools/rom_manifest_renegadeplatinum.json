@@ -1,0 +1,17 @@
+{
+  "format": 4,
+  "generation": 4,
+  "romSha1": "381f9eef44564602a5f6469ee8c390fbb8ebac3a",
+  "gameCode": "CPUE",
+  "title": "POKEMON PL",
+  "baseRomSha1": "0862ec35b24de5c7e2dcb88c9eea0873110d755c",
+  "notes": [
+    "Renegade Platinum (Drayano), a ROM hack of Pokemon Platinum (USA) Rev 1.",
+    "A Nintendo DS cartridge is a filesystem: every extraction stage opens a file by",
+    "its path, and the hack keeps Platinum's paths, so this manifest carries only which",
+    "dump is this game -- RomImporter reads romSha1. The file is the trimmed patched",
+    "ROM (104,922,516 bytes); its header still says CPUE revision 1.",
+    "What differs from the base cartridge, and how the extractor handles it:",
+    "src/import/Gen4Versions.lua (renegadeplatinum) and docs/renegade-platinum.md."
+  ]
+}

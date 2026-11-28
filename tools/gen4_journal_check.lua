@@ -91,6 +91,22 @@ if text and data.gen4_area_popup then
     mon = { result = 'caught', species = 25, gender = 0, time = 0, variant = 0 },
     trainer = { trainer = 1, map = 3 }, online = {} }
   local r = J.render(game, page)
+  local LANG = load('gen4_language')
+  if LANG then
+    -- a non-English cartridge words every row itself: each is a real line of the
+    -- bank with this page's names in it, never the English sentence
+    local function real(v) return type(v) == 'string' and v ~= '' and not v:find('{', 1, true) end
+    check(real(r.date) and r.date:find('10', 1, true) and r.date ~= 'Oct. 10', 'the date: "' .. tostring(r.date) .. '"')
+    check(real(r.weekday) and r.weekday ~= 'Saturday', 'the weekday: "' .. tostring(r.weekday) .. '"')
+    local english = { 'Started from Twinleaf Town.', 'Rested comfortably at home.', 'Arrived in Jubilife City.' }
+    for i = 1, 3 do
+      check(real(r.lines[i]) and r.lines[i] ~= english[i], ('row %d is the cartridge\'s own line: "%s"'):format(i, tostring(r.lines[i])))
+    end
+    check(real(r.lines[4]) and not r.lines[4]:find('Oreburgh', 1, true), 'beat the gym leader: "' .. tostring(r.lines[4]) .. '"')
+    check(real(r.lines[5]) and not r.lines[5]:find('Oreburgh', 1, true), 'left a building: "' .. tostring(r.lines[5]) .. '"')
+    check(real(r.lines[6]) and (r.lines[6]:find('Pikachu', 1, true) or r.lines[6]:find('PIKACHU', 1, true)), 'caught: "' .. tostring(r.lines[6]) .. '"')
+    check(real(r.lines[7]) and not r.lines[7]:find('Jubilife', 1, true), 'the trainer line: "' .. tostring(r.lines[7]) .. '"')
+  else
   check(r.date == 'Oct. 10', 'the date: "' .. tostring(r.date) .. '"')
   check(r.weekday == 'Saturday', 'the weekday')
   check(r.lines[1] == 'Started from Twinleaf Town.', 'started from: "' .. tostring(r.lines[1]) .. '"')
@@ -100,6 +116,7 @@ if text and data.gen4_area_popup then
   check(r.lines[5]:find('Oreburgh City', 1, true), 'left a building: "' .. tostring(r.lines[5]) .. '"')
   check(r.lines[6]:find('Pikachu', 1, true) or r.lines[6]:find('PIKACHU', 1, true), 'caught: "' .. tostring(r.lines[6]) .. '"')
   check(r.lines[7]:find('Jubilife City', 1, true), 'the trainer line: "' .. tostring(r.lines[7]) .. '"')
+  end
   check(#r.lines == 9, 'nine rows under the title')
 end
 
